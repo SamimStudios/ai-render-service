@@ -133,3 +133,70 @@ def render_title_card(
 
     shutil.rmtree(frames_dir, ignore_errors=True)
     return mp4_name
+
+
+    # --- PNG renderer (single image) ---------------------------------------------
+def render_card_png(
+    text: str,
+    out_dir: str = "out",
+    width: int = 1280,
+    height: int = 720,
+    font_size: int = 96,
+    font_file: str = DEFAULT_FONT,
+    direction: Literal["auto","ltr","rtl"] = "auto",
+    bg=(0,0,0,255),
+    fill=(255,255,255,255),
+    shadow=(0,0,0,110),
+    padding: int = 48,
+) -> str:
+    """
+    Renders a single PNG title card (Arabic-aware). Returns the PNG filename in out_dir.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    # detect Arabic and shape if needed
+    is_ar = _looks_arabic(text)
+    vis_text = _shape_ar(text) if is_ar else text
+
+    img = Image.new("RGBA", (width, height), bg)
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype(font_file, font_size)
+
+    # compute wrapped text if too long (very simple)
+    max_w = width - padding * 2
+    words = list(vis_text)  # char-by-char safer with Arabic shaping
+    lines, line = [], ""
+    for ch in words:
+        test = line + ch
+        if _measure_w(draw, test, font) <= max_w:
+            line = test
+        else:
+            if line:
+                lines.append(line)
+            line = ch
+    if line:
+        lines.append(line)
+
+    # total text block height
+    line_h = int(font_size * 1.15)
+    block_h = line_h * len(lines)
+
+    # start y to vertically center
+    y = (height - block_h) // 2
+
+    # draw each line centered; add tiny shadow for contrast
+    for ln in lines:
+        w_ln = _measure_w(draw, ln, font)
+        x = (width - w_ln) // 2  # centered regardless of rtl/ltr
+        if shadow[3] > 0:
+            draw.text((x+2, y+2), ln, font=font,
+                      fill=(shadow[0], shadow[1], shadow[2], shadow[3]))
+        draw.text((x, y), ln, font=font, fill=fill)
+        y += line_h
+
+    # save
+    name = f"card_{int(time.time())}-{uuid.uuid4().hex[:8]}.png"
+    path = os.path.join(out_dir, name)
+    img.save(path, "PNG")
+    return name
+

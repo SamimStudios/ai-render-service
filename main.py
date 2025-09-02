@@ -34,6 +34,16 @@ class CardReq(BaseModel):
     font_size: int = 96
     font_file: Optional[str] = "fonts/IBMPlexSansArabic-Bold.ttf"
 
+
+class CardPNGReq(BaseModel):
+    text: str = Field(..., min_length=1, max_length=120)
+    direction: Literal["auto","ltr","rtl"] = "auto"
+    width: int = 1280
+    height: int = 720
+    font_size: int = 96
+    font_file: Optional[str] = "fonts/IBMPlexSansArabic-Bold.ttf"
+
+
 @app.get("/")
 def root():
     return {"ok": True, "hint": "POST /render/card"}
@@ -52,6 +62,25 @@ def render_card(req: CardReq, request: Request):
         )
         base = str(request.base_url).rstrip("/")
         url = f"{base}/static/{mp4_name}"
+        return {"status":"ok","url":url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+from renderer import render_title_card, render_card_png  # make sure PNG is imported
+
+@app.post("/render/card_png")
+def render_card_png_route(req: CardPNGReq, request: Request):
+    try:
+        png_name = render_card_png(
+            text=req.text,
+            out_dir=OUT_DIR,
+            width=req.width, height=req.height,
+            font_size=req.font_size,
+            font_file=req.font_file or "fonts/IBMPlexSansArabic-Bold.ttf",
+            direction=req.direction,
+        )
+        base = str(request.base_url).rstrip("/")
+        url = f"{base}/static/{png_name}"
         return {"status":"ok","url":url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
