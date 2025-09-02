@@ -136,6 +136,8 @@ def render_title_card(
 
 
     # --- PNG renderer (single image) ---------------------------------------------
+# --- PNG renderer (single image, Arabic-safe) -------------------------------
+# --- PNG renderer (single image, Arabic-safe) -------------------------------
 def render_card_png(
     text: str,
     out_dir: str = "out",
@@ -151,52 +153,68 @@ def render_card_png(
 ) -> str:
     """
     Renders a single PNG title card (Arabic-aware). Returns the PNG filename in out_dir.
+    Key fixes:
+      - shape Arabic once (arabic_reshaper + bidi)
+      - draw the WHOLE string once (no char-by-char)
+      - use RAQM if available for better Arabic layout
     """
     os.makedirs(out_dir, exist_ok=True)
 
-    # detect Arabic and shape if needed
+    # Detect Arabic & shape to visual order so letters connect
     is_ar = _looks_arabic(text)
     vis_text = _shape_ar(text) if is_ar else text
 
+    # Canvas
     img = Image.new("RGBA", (width, height), bg)
     draw = ImageDraw.Draw(img)
-    font = ImageFont.truetype(font_file, font_size)
 
-    # compute wrapped text if too long (very simple)
-    max_w = width - padding * 2
-    words = list(vis_text)  # char-by-char safer with Arabic shaping
-    lines, line = [], ""
-    for ch in words:
-        test = line + ch
-        if _measure_w(draw, test, font) <= max_w:
-            line = test
-        else:
-            if line:
-                lines.append(line)
-            line = ch
-    if line:
-        lines.append(line)
+    # Prefer RAQM layout engine if Pillow was compiled with it
+    layout_kw = {}
+    if hasattr(ImageFont, "LAYOUT_RAQM"):
+        layout_kw["layout_engine"] = ImageFont.LAYOUT_RAQM
 
-    # total text block height
-    line_h = int(font_size * 1.15)
-    block_h = line_h * len(lines)
+    font = ImageFont.truetype(font_file, font_size, **layout_kw)
 
-    # start y to vertically center
-    y = (height - block_h) // 2
+    # Measure once using bbox, then center
+    bbox = draw.textbbox((0, 0), vis_text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
 
-    # draw each line centered; add tiny shadow for contrast
-    for ln in lines:
-        w_ln = _measure_w(draw, ln, font)
-        x = (width - w_ln) // 2  # centered regardless of rtl/ltr
-        if shadow[3] > 0:
-            draw.text((x+2, y+2), ln, font=font,
+    # Clamp size if extremely wide: reduce font until it fits (optional)
+    while text_w > (width - 2 * padding) and font_size > 24:
+        font_size = int(font_size * 0.9)
+        font = ImageFont.truetype(font_file, font_size, **layout_kw)
+        bbox = draw.textbbox((0, 0), vis_text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+    x = (width - text_w) // 2
+    y = (height - text_h) // 2
+
+    # Optional direction hint (only works if RAQM present; ignore errors)
+    dir_kwargs = {}
+    try:
+        dir_kwargs["direction"] = "rtl" if (direction == "rtl" or (direction == "auto" and is_ar)) else "ltr"
+    except Exception:
+        dir_kwargs = {}
+
+    # Shadow then text
+    if shadow[3] > 0:
+        try:
+            draw.text((x + 2, y + 2), vis_text, font=font,
+                      fill=(shadow[0], shadow[1], shadow[2], shadow[3]),
+                      **dir_kwargs)
+        except TypeError:
+            # Pillow without direction support
+            draw.text((x + 2, y + 2), vis_text, font=font,
                       fill=(shadow[0], shadow[1], shadow[2], shadow[3]))
-        draw.text((x, y), ln, font=font, fill=fill)
-        y += line_h
 
-    # save
+    try:
+        draw.text((x, y), vis_text, font=font, fill=fill, **dir_kwargs)
+    except TypeError:
+        draw.text((x, y), vis_text, font=font, fill=fill)
+
     name = f"card_{int(time.time())}-{uuid.uuid4().hex[:8]}.png"
     path = os.path.join(out_dir, name)
     img.save(path, "PNG")
     return name
-
