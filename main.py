@@ -23,8 +23,8 @@ app.mount("/static", StaticFiles(directory=OUT_DIR), name="static")
 class CardReq(BaseModel):
     text: str = Field(..., min_length=1, max_length=120)
     direction: Literal["auto","ltr","rtl"] = "auto"
-    width: int = 1920
-    height: int = 1080
+    width: int = 1280
+    height: int = 720
     fps: int = 24
     total_dur: float = 5.0
     letter_delay: float = 0.06
