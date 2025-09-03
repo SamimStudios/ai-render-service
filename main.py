@@ -84,3 +84,9 @@ def render_card_png_route(req: CardPNGReq, request: Request):
         return {"status":"ok","url":url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+from PIL import features
+
+@app.get("/debug/raqm")
+def debug_raqm():
+    return {"raqm": features.check("raqm")}

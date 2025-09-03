@@ -1,7 +1,7 @@
 # renderer.py
 import os, re, shutil, subprocess, time, uuid
 from typing import Literal
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, features
 import arabic_reshaper
 from bidi.algorithm import get_display
 
@@ -19,13 +19,17 @@ def _shape_ar(text: str) -> str:
 def _measure_w(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> float:
     # robust width across Pillow versions
     if hasattr(font, "getlength"):
-        try: return font.getlength(text)
-        except: pass
+        try:
+            return font.getlength(text)
+        except:
+            pass
     if hasattr(draw, "textlength"):
-        try: return draw.textlength(text, font=font)
-        except: pass
-    bbox = draw.textbbox((0,0), text, font=font)
-    return bbox[2]-bbox[0]
+        try:
+            return draw.textlength(text, font=font)
+        except:
+            pass
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0]
 
 def render_title_card(
     text: str,
@@ -64,7 +68,7 @@ def render_title_card(
 
     # font & scene
     font = ImageFont.truetype(font_file, font_size)
-    base = Image.new("RGBA", (width, height))
+    base = Image.new("RGBA", (width, height))  # (unused canvas for metrics context)
     drw = ImageDraw.Draw(base)
     chars = list(vis_text)
     n = len(chars)
@@ -82,7 +86,7 @@ def render_title_card(
     advances = [_measure_w(drw, "".join(chars[:i]), font) for i in range(n)]
     total_w = _measure_w(drw, "".join(chars), font)
     base_x = (width - total_w) / 2.0
-    baseline_y = height/2.0 - font_size/2.8
+    baseline_y = height / 2.0 - font_size / 2.8
     x_sign = +1 if dir_mode == "ltr" else -1
 
     def ease_out_cubic(t: float) -> float:
@@ -109,61 +113,88 @@ def render_title_card(
 
             # shadow
             if shadow[3] > 0:
-                draw.text((x+2, y+2), ch, font=font,
-                          fill=(shadow[0],shadow[1],shadow[2], int(shadow[3]*(alpha/255))))
+                draw.text(
+                    (x + 2, y + 2),
+                    ch,
+                    font=font,
+                    fill=(shadow[0], shadow[1], shadow[2], int(shadow[3] * (alpha / 255))),
+                )
 
             # glyph
-            draw.text((x, y), ch, font=font,
-                      fill=(fill[0],fill[1],fill[2], alpha),
-                      stroke_width=stroke_w,
-                      stroke_fill=(stroke_fill[0],stroke_fill[1],stroke_fill[2], int(stroke_fill[3]*(alpha/255))))
+            draw.text(
+                (x, y),
+                ch,
+                font=font,
+                fill=(fill[0], fill[1], fill[2], alpha),
+                stroke_width=stroke_w,
+                stroke_fill=(
+                    stroke_fill[0],
+                    stroke_fill[1],
+                    stroke_fill[2],
+                    int(stroke_fill[3] * (alpha / 255)),
+                ),
+            )
 
         frame.save(os.path.join(frames_dir, f"{f:05d}.png"))
 
     # encode to mp4 (requires ffmpeg installed)
     mp4_name = f"card_{job_id}.mp4"
     mp4_path = os.path.join(out_dir, mp4_name)
-    subprocess.run([
-        "ffmpeg","-y",
-        "-framerate", str(fps),
-        "-i", os.path.join(frames_dir, "%05d.png"),
-        "-pix_fmt","yuv420p","-c:v","libx264","-preset","medium","-crf","18",
-        "-movflags","+faststart", mp4_path
-    ], check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-framerate", str(fps),
+            "-i", os.path.join(frames_dir, "%05d.png"),
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-movflags", "+faststart",
+            mp4_path,
+        ],
+        check=True,
+    )
 
     shutil.rmtree(frames_dir, ignore_errors=True)
     return mp4_name
 
 
-    # --- PNG renderer (single image) ---------------------------------------------
 # --- PNG renderer (single image, Arabic-safe) -------------------------------
-# --- PNG renderer (single image, Arabic-safe) -------------------------------
-def render_card_png(...):
+def render_card_png(
+    text: str,
+    out_dir: str = "out",
+    width: int = 1280,
+    height: int = 720,
+    font_size: int = 96,
+    font_file: str = DEFAULT_FONT,
+    direction: Literal["auto","ltr","rtl"] = "auto",
+    bg=(0,0,0,255),
+    fill=(255,255,255,255),
+    shadow=(0,0,0,110),
+    padding: int = 48,
+) -> str:
     os.makedirs(out_dir, exist_ok=True)
 
-    # Check RAQM availability
-    has_raqm = hasattr(ImageFont, "LAYOUT_RAQM")
-
+    has_raqm = features.check("raqm")
     is_ar = _looks_arabic(text)
     use_rtl = (direction == "rtl") or (direction == "auto" and is_ar)
 
-    # Choose ONE shaping path
+    # Path A: RAQM present → let Pillow do shaping/bidi/kerning
     if has_raqm:
-        # Path A: RAQM does shaping/kerning/RTL
-        vis_text = text  # raw
-        font = ImageFont.truetype(
-            font_file, font_size, layout_engine=ImageFont.LAYOUT_RAQM
-        )
+        vis_text = text  # raw string (no manual shaping)
+        font = ImageFont.truetype(font_file, font_size, layout_engine=ImageFont.LAYOUT_RAQM)
         dir_kwargs = {"direction": ("rtl" if use_rtl else "ltr")}
     else:
-        # Path B: fallback to manual shaping; then draw as-is
+        # Path B: fallback → manual shaping, then draw without direction
         vis_text = _shape_ar(text) if is_ar else text
         font = ImageFont.truetype(font_file, font_size)
-        dir_kwargs = {}  # don't pass direction without RAQM
+        dir_kwargs = {}
 
-    # --- measure & center ---
     img = Image.new("RGBA", (width, height), bg)
     draw = ImageDraw.Draw(img)
+
+    # Measure & center; re-measure if we shrink the font
     bbox = draw.textbbox((0, 0), vis_text, font=font, **dir_kwargs)
     text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     while text_w > (width - 2 * padding) and font_size > 24:
@@ -178,11 +209,14 @@ def render_card_png(...):
     x = (width - text_w) // 2
     y = (height - text_h) // 2
 
-    # Shadow then text
     if shadow[3] > 0:
-        draw.text((x + 2, y + 2), vis_text, font=font,
-                  fill=(shadow[0], shadow[1], shadow[2], shadow[3]),
-                  **dir_kwargs)
+        draw.text(
+            (x + 2, y + 2),
+            vis_text,
+            font=font,
+            fill=(shadow[0], shadow[1], shadow[2], shadow[3]),
+            **dir_kwargs,
+        )
     draw.text((x, y), vis_text, font=font, fill=fill, **dir_kwargs)
 
     name = f"card_{int(time.time())}-{uuid.uuid4().hex[:8]}.png"
