@@ -2,8 +2,19 @@
 import os, re, shutil, subprocess, time, uuid
 from typing import Literal
 from PIL import Image, ImageDraw, ImageFont
-import arabic_reshaper
+from arabic_reshaper import ArabicReshaper
 from bidi.algorithm import get_display
+
+# --- Arabic shaping config (robust across environments) ---
+RESHAPER = ArabicReshaper({
+    # keep diacritics if you use them; set True to strip if needed
+    "delete_harakat": False,
+    # ensure lam-alef and other ligatures form correctly
+    "support_ligatures": True,
+})
+def _shape_ar(text: str) -> str:
+    # reshape then apply bidi with explicit RTL base direction
+    return get_display(RESHAPER.reshape(text), base_dir="R")
 
 # default font inside the repo
 DEFAULT_FONT = os.getenv("FONT_FILE", "fonts/IBMPlexSansArabic-Bold.ttf")
@@ -11,10 +22,6 @@ AR_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
 
 def _looks_arabic(s: str) -> bool:
     return bool(AR_RE.search(s))
-
-def _shape_ar(text: str) -> str:
-    """Manually shape Arabic: connect letters + apply bidi so it renders correctly in LTR-only contexts."""
-    return get_display(arabic_reshaper.reshape(text))
 
 def _measure_w(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> float:
     """Robust width measurement across Pillow versions."""
@@ -51,28 +58,32 @@ def render_title_card(
     stroke_w: int = 0,
     stroke_fill=(0,0,0,160),
 ) -> str:
-    """Renders a letter-by-letter animated title card; returns the MP4 filename created in out_dir."""
-    # decide direction (only used for animation order)
+    """Renders a title card animation; returns the MP4 filename created in out_dir."""
+    os.makedirs(out_dir, exist_ok=True)
+
+    # 1) Direction is only for animation order now
     is_ar = _looks_arabic(text)
     dir_mode = ("rtl" if is_ar else "ltr") if direction == "auto" else direction
 
-    # ALWAYS shape Arabic to connect letters + proper bidi
+    # 2) ALWAYS shape Arabic for correct ligatures/RTL
     vis_text = _shape_ar(text) if is_ar else text
 
+    # 3) Arabic: draw as a single unit (ligatures/marks must remain in context)
+    #    Non-Arabic: per-character animation is fine.
+    units = [vis_text] if is_ar else list(vis_text)
+    n = len(units)
+
     # workspace
-    os.makedirs(out_dir, exist_ok=True)
     job_id = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
     frames_dir = os.path.join(out_dir, f"frames_{job_id}")
     os.makedirs(frames_dir, exist_ok=True)
 
-    # font & scene
+    # font & metrics canvas
     font = ImageFont.truetype(font_file, font_size)
-    base = Image.new("RGBA", (width, height))  # (unused canvas for metrics context)
+    base = Image.new("RGBA", (width, height))
     drw = ImageDraw.Draw(base)
-    chars = list(vis_text)
-    n = len(chars)
 
-    # timings
+    # timings: RTL animates from rightmost unit to leftmost; Arabic has only one unit
     if dir_mode == "rtl":
         starts = [(n - 1 - i) * letter_delay for i in range(n)]
     else:
@@ -82,8 +93,9 @@ def render_title_card(
     total_frames = round(duration * fps)
 
     # positions
-    advances = [_measure_w(drw, "".join(chars[:i]), font) for i in range(n)]
-    total_w = _measure_w(drw, "".join(chars), font)
+    # For Arabic (single unit), advances = [0]; for LTR we accumulate per unit
+    advances = [_measure_w(drw, "".join(units[:i]), font) for i in range(n)]
+    total_w = _measure_w(drw, "".join(units), font)
     base_x = (width - total_w) / 2.0
     baseline_y = height / 2.0 - font_size / 2.8
     x_sign = +1 if dir_mode == "ltr" else -1
@@ -97,7 +109,7 @@ def render_title_card(
         frame = Image.new("RGBA", (width, height), bg)
         draw = ImageDraw.Draw(frame)
 
-        for i, ch in enumerate(chars):
+        for i, unit in enumerate(units):
             t0 = starts[i]
             local = (t - t0) / fade_dur
             if local <= 0:
@@ -114,15 +126,14 @@ def render_title_card(
             if shadow[3] > 0:
                 draw.text(
                     (x + 2, y + 2),
-                    ch,
+                    unit,
                     font=font,
                     fill=(shadow[0], shadow[1], shadow[2], int(shadow[3] * (alpha / 255))),
                 )
-
-            # glyph
+            # glyph/unit
             draw.text(
                 (x, y),
-                ch,
+                unit,
                 font=font,
                 fill=(fill[0], fill[1], fill[2], alpha),
                 stroke_width=stroke_w,
@@ -158,7 +169,6 @@ def render_title_card(
     shutil.rmtree(frames_dir, ignore_errors=True)
     return mp4_name
 
-
 # --- PNG renderer (single image, Arabic-safe) -------------------------------
 def render_card_png(
     text: str,
@@ -167,7 +177,7 @@ def render_card_png(
     height: int = 720,
     font_size: int = 96,
     font_file: str = DEFAULT_FONT,
-    direction: Literal["auto","ltr","rtl"] = "auto",  # kept for parity; not needed for manual shaping
+    direction: Literal["auto","ltr","rtl"] = "auto",  # kept for API parity
     bg=(0,0,0,255),
     fill=(255,255,255,255),
     shadow=(0,0,0,110),
