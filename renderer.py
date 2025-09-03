@@ -1,7 +1,7 @@
 # renderer.py
 import os, re, shutil, subprocess, time, uuid
 from typing import Literal
-from PIL import Image, ImageDraw, ImageFont, features
+from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
 from bidi.algorithm import get_display
 
@@ -13,11 +13,11 @@ def _looks_arabic(s: str) -> bool:
     return bool(AR_RE.search(s))
 
 def _shape_ar(text: str) -> str:
-    # connect Arabic letters correctly
+    """Manually shape Arabic: connect letters + apply bidi so it renders correctly in LTR-only contexts."""
     return get_display(arabic_reshaper.reshape(text))
 
 def _measure_w(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> float:
-    # robust width across Pillow versions
+    """Robust width measurement across Pillow versions."""
     if hasattr(font, "getlength"):
         try:
             return font.getlength(text)
@@ -52,12 +52,11 @@ def render_title_card(
     stroke_fill=(0,0,0,160),
 ) -> str:
     """Renders a letter-by-letter animated title card; returns the MP4 filename created in out_dir."""
-
-    # decide direction
+    # decide direction (only used for animation order)
     is_ar = _looks_arabic(text)
     dir_mode = ("rtl" if is_ar else "ltr") if direction == "auto" else direction
 
-    # shape Arabic to connect letters
+    # ALWAYS shape Arabic to connect letters + proper bidi
     vis_text = _shape_ar(text) if is_ar else text
 
     # workspace
@@ -168,46 +167,30 @@ def render_card_png(
     height: int = 720,
     font_size: int = 96,
     font_file: str = DEFAULT_FONT,
-    direction: Literal["auto","ltr","rtl"] = "auto",
+    direction: Literal["auto","ltr","rtl"] = "auto",  # kept for parity; not needed for manual shaping
     bg=(0,0,0,255),
     fill=(255,255,255,255),
     shadow=(0,0,0,110),
     padding: int = 48,
 ) -> str:
+    """Render a single PNG with manual Arabic shaping; RAQM is not used."""
     os.makedirs(out_dir, exist_ok=True)
 
-    has_raqm_feature = bool(features.check("raqm"))
-    has_raqm_const = hasattr(ImageFont, "LAYOUT_RAQM")
-    can_use_raqm = has_raqm_feature and has_raqm_const
-
+    # ALWAYS shape Arabic
     is_ar = _looks_arabic(text)
-    use_rtl = (direction == "rtl") or (direction == "auto" and is_ar)
+    vis_text = _shape_ar(text) if is_ar else text
 
-    # Path A: RAQM present → let Pillow do shaping/bidi/kerning
-    if can_use_raqm:
-        vis_text = text  # raw string (no manual shaping)
-        raqm_engine = getattr(ImageFont, "LAYOUT_RAQM")
-        font = ImageFont.truetype(font_file, font_size, layout_engine=raqm_engine)
-        dir_kwargs = {"direction": ("rtl" if use_rtl else "ltr")}
-    else:
-        # Path B: fallback → manual shaping, then draw without direction
-        vis_text = _shape_ar(text) if is_ar else text
-        font = ImageFont.truetype(font_file, font_size)
-        dir_kwargs = {}
-
+    font = ImageFont.truetype(font_file, font_size)
     img = Image.new("RGBA", (width, height), bg)
     draw = ImageDraw.Draw(img)
 
     # Measure & center; re-measure if we shrink the font
-    bbox = draw.textbbox((0, 0), vis_text, font=font, **dir_kwargs)
+    bbox = draw.textbbox((0, 0), vis_text, font=font)
     text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     while text_w > (width - 2 * padding) and font_size > 24:
         font_size = int(font_size * 0.9)
-        if can_use_raqm:
-            font = ImageFont.truetype(font_file, font_size, layout_engine=raqm_engine)
-        else:
-            font = ImageFont.truetype(font_file, font_size)
-        bbox = draw.textbbox((0, 0), vis_text, font=font, **dir_kwargs)
+        font = ImageFont.truetype(font_file, font_size)
+        bbox = draw.textbbox((0, 0), vis_text, font=font)
         text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
     x = (width - text_w) // 2
@@ -219,9 +202,8 @@ def render_card_png(
             vis_text,
             font=font,
             fill=(shadow[0], shadow[1], shadow[2], shadow[3]),
-            **dir_kwargs,
         )
-    draw.text((x, y), vis_text, font=font, fill=fill, **dir_kwargs)
+    draw.text((x, y), vis_text, font=font, fill=fill)
 
     name = f"card_{int(time.time())}-{uuid.uuid4().hex[:8]}.png"
     img.save(os.path.join(out_dir, name), "PNG")
