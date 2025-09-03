@@ -1,13 +1,12 @@
 FROM python:3.11-slim
 
-# Install FFmpeg and libraqm dependencies
+# Install FFmpeg and RAQM runtime deps (for proper Arabic shaping)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    librsvg2-bin \
-    libraqm \
-    libfribidi0 \
     libharfbuzz0b \
+    libfribidi0 \
     libfreetype6 \
+    libraqm0 \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
