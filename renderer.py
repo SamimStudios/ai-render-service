@@ -176,14 +176,18 @@ def render_card_png(
 ) -> str:
     os.makedirs(out_dir, exist_ok=True)
 
-    has_raqm = features.check("raqm")
+    has_raqm_feature = bool(features.check("raqm"))
+    has_raqm_const = hasattr(ImageFont, "LAYOUT_RAQM")
+    can_use_raqm = has_raqm_feature and has_raqm_const
+
     is_ar = _looks_arabic(text)
     use_rtl = (direction == "rtl") or (direction == "auto" and is_ar)
 
     # Path A: RAQM present → let Pillow do shaping/bidi/kerning
-    if has_raqm:
+    if can_use_raqm:
         vis_text = text  # raw string (no manual shaping)
-        font = ImageFont.truetype(font_file, font_size, layout_engine=ImageFont.LAYOUT_RAQM)
+        raqm_engine = getattr(ImageFont, "LAYOUT_RAQM")
+        font = ImageFont.truetype(font_file, font_size, layout_engine=raqm_engine)
         dir_kwargs = {"direction": ("rtl" if use_rtl else "ltr")}
     else:
         # Path B: fallback → manual shaping, then draw without direction
@@ -199,8 +203,8 @@ def render_card_png(
     text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     while text_w > (width - 2 * padding) and font_size > 24:
         font_size = int(font_size * 0.9)
-        if has_raqm:
-            font = ImageFont.truetype(font_file, font_size, layout_engine=ImageFont.LAYOUT_RAQM)
+        if can_use_raqm:
+            font = ImageFont.truetype(font_file, font_size, layout_engine=raqm_engine)
         else:
             font = ImageFont.truetype(font_file, font_size)
         bbox = draw.textbbox((0, 0), vis_text, font=font, **dir_kwargs)

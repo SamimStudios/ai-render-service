@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Literal, Optional
-from renderer import render_title_card
+from renderer import render_title_card, render_card_png
+from PIL import features, ImageFont
 
 OUT_DIR = "out"
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -13,16 +14,17 @@ os.makedirs(OUT_DIR, exist_ok=True)
 app = FastAPI(title="AI Scenes Render API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # open for local testing; we can lock later
+    allow_origins=["*"],  # open for local testing; lock down later if needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=OUT_DIR), name="static")
 
+
 class CardReq(BaseModel):
     text: str = Field(..., min_length=1, max_length=120)
-    direction: Literal["auto","ltr","rtl"] = "auto"
+    direction: Literal["auto", "ltr", "rtl"] = "auto"
     width: int = 1280
     height: int = 720
     fps: int = 24
@@ -37,7 +39,7 @@ class CardReq(BaseModel):
 
 class CardPNGReq(BaseModel):
     text: str = Field(..., min_length=1, max_length=120)
-    direction: Literal["auto","ltr","rtl"] = "auto"
+    direction: Literal["auto", "ltr", "rtl"] = "auto"
     width: int = 1280
     height: int = 720
     font_size: int = 96
@@ -46,7 +48,11 @@ class CardPNGReq(BaseModel):
 
 @app.get("/")
 def root():
-    return {"ok": True, "hint": "POST /render/card"}
+    return {
+        "ok": True,
+        "hint": "POST /render/card (mp4) or /render/card_png (png); GET /debug/raqm",
+    }
+
 
 @app.post("/render/card")
 def render_card(req: CardReq, request: Request):
@@ -54,19 +60,24 @@ def render_card(req: CardReq, request: Request):
         mp4_name = render_title_card(
             text=req.text,
             out_dir=OUT_DIR,
-            width=req.width, height=req.height, fps=req.fps,
-            total_dur=req.total_dur, letter_delay=req.letter_delay,
-            fade_dur=req.fade_dur, rise_px=req.rise_px, x_slide_px=req.x_slide_px,
-            font_size=req.font_size, font_file=req.font_file or "fonts/IBMPlexSansArabic-Bold.ttf",
+            width=req.width,
+            height=req.height,
+            fps=req.fps,
+            total_dur=req.total_dur,
+            letter_delay=req.letter_delay,
+            fade_dur=req.fade_dur,
+            rise_px=req.rise_px,
+            x_slide_px=req.x_slide_px,
+            font_size=req.font_size,
+            font_file=req.font_file or "fonts/IBMPlexSansArabic-Bold.ttf",
             direction=req.direction,
         )
         base = str(request.base_url).rstrip("/")
         url = f"{base}/static/{mp4_name}"
-        return {"status":"ok","url":url}
+        return {"status": "ok", "url": url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-from renderer import render_title_card, render_card_png  # make sure PNG is imported
 
 @app.post("/render/card_png")
 def render_card_png_route(req: CardPNGReq, request: Request):
@@ -74,19 +85,22 @@ def render_card_png_route(req: CardPNGReq, request: Request):
         png_name = render_card_png(
             text=req.text,
             out_dir=OUT_DIR,
-            width=req.width, height=req.height,
+            width=req.width,
+            height=req.height,
             font_size=req.font_size,
             font_file=req.font_file or "fonts/IBMPlexSansArabic-Bold.ttf",
             direction=req.direction,
         )
         base = str(request.base_url).rstrip("/")
         url = f"{base}/static/{png_name}"
-        return {"status":"ok","url":url}
+        return {"status": "ok", "url": url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-from PIL import features
 
 @app.get("/debug/raqm")
 def debug_raqm():
-    return {"raqm": features.check("raqm")}
+    return {
+        "features.raqm": bool(features.check("raqm")),
+        "has_LAYOUT_RAQM": hasattr(ImageFont, "LAYOUT_RAQM"),
+    }
