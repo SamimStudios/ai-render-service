@@ -1,22 +1,26 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONUNBUFFERED=1
 
-# FFmpeg + RAQM runtime deps (RTL/Arabic shaping)
+# Install build + runtime deps for RAQM
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libfreetype6-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    libraqm-dev \
     ffmpeg \
-    libharfbuzz0b \
-    libfribidi0 \
-    libfreetype6 \
-    libraqm0 \
-  && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN python -m pip install --upgrade pip \
+
+# Force Pillow from source
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-binary :all: pillow \
  && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
